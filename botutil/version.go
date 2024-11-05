@@ -2,8 +2,8 @@
 package botutil
 
 const (
-	GameVersion = "5.0.7.84643"
+	GameVersion = "5.0.13.92440"
 	DataVersion = "A389D1F7DF9DD792FBE980533B7119FF"
-	DataBuild   = 84643
-	BaseBuild   = 84643
+	DataBuild   = 92440
+	BaseBuild   = 92440
 )

@@ -108,13 +108,12 @@ func hasProcessPath() bool {
 func processPathForBuild(build uint32) string {
 	path := processPath
 	if build != 0 {
-		// Get the exe name and then back out to the Versions directory
-		_, exe := filepath.Split(path)
 		root := sc2Path(path)
 		if root == "" {
 			log.Printf("Can't find game dir: %v", path)
 		}
 		dir := filepath.Join(sc2Path(path), "Versions")
+		exe := sc2Exe(path)
 
 		// Get the path of the correct version and make sure the exe exists
 		path = filepath.Join(dir, fmt.Sprintf("Base%v", build), exe)
@@ -175,6 +174,25 @@ func sc2Path(path string) string {
 			return ""
 		}
 	}
+}
+
+// sc2Exe returns the rest of the path, after the version, denoted like `BaseXXX`
+func sc2Exe(path string) string {
+	versions := filepath.Join(sc2Path(path), "Versions")
+	path = path[len(versions):]
+	elems := make([]string, 0)
+	for path != filepath.Dir(path) {
+		elems = append(elems, filepath.Base(path))
+		path = filepath.Dir(path)
+	}
+
+	// remove last el (BaseXXX)
+	elems = elems[:len(elems)-1]
+	exe := ""
+	for _, el := range elems {
+		exe = filepath.Join(el, exe)
+	}
+	return exe
 }
 
 func getSubdirs(dir string) []string {
