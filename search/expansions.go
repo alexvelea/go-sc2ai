@@ -1,6 +1,8 @@
 package search
 
 import (
+	"sort"
+
 	"github.com/chippydip/go-sc2ai/api"
 	"github.com/chippydip/go-sc2ai/botutil"
 	"github.com/chippydip/go-sc2ai/client"
@@ -10,6 +12,8 @@ import (
 // BaseLocation contains the optimal build location for a given resource cluster.
 type BaseLocation struct {
 	Resources UnitCluster
+	Minerals  []botutil.Unit
+	Vespene   []botutil.Unit
 	Location  api.Point2D
 }
 
@@ -61,8 +65,27 @@ func CalculateBaseLocations(bot *botutil.Bot, debug bool) []BaseLocation {
 			}
 		}
 
+		minerals := make([]botutil.Unit, 0)
+		vespene := make([]botutil.Unit, 0)
+		for _, unit := range cluster.units {
+			if unit.MineralContents != 0 {
+				minerals = append(minerals, unit)
+			} else {
+				vespene = append(vespene, unit)
+			}
+		}
+
+		sort.Slice(minerals, func(i, j int) bool {
+			return minerals[i].MineralContents > minerals[j].MineralContents
+		})
+
 		// Update the Center to be the detected location rather than the actual CoM (just don't add new units)
-		locs[i] = BaseLocation{clusters[i], api.Point2D{X: float32(xBest) + 0.5, Y: float32(yBest) + 0.5}}
+		locs[i] = BaseLocation{
+			Resources: cluster,
+			Minerals:  minerals,
+			Vespene:   vespene,
+			Location:  api.Point2D{X: float32(xBest) + 0.5, Y: float32(yBest) + 0.5},
+		}
 	}
 
 	if debug {

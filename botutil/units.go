@@ -128,6 +128,17 @@ func (units Units) Each(f func(Unit)) {
 	}
 }
 
+func (units Units) ByTag(tag api.UnitTag) Unit {
+	for _, u := range units.raw {
+		if units.filter == nil || units.filter(u) {
+			if u.Tag == tag {
+				return u
+			}
+		}
+	}
+	return Unit{}
+}
+
 // EachWhile calls f until it returns false or runs out of elements.
 // Returns the last result of f (false on early return).
 func (units Units) EachWhile(f func(Unit) bool) bool {

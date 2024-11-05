@@ -1,8 +1,11 @@
 package search
 
 import (
+	"log"
+
 	"github.com/chippydip/go-sc2ai/api"
 	"github.com/chippydip/go-sc2ai/botutil"
+	"github.com/chippydip/go-sc2ai/enums/ability"
 )
 
 type bases struct {
@@ -84,14 +87,35 @@ func (b *bases) update(bot *botutil.Bot) {
 			pos := u.Pos2D()
 			b.NearestBase(pos).GasBuildings[pos] = u
 		} else if u.IsWorker() {
-			base := b.NearestBase(u.Pos2D())
-			if u.Alliance == api.Alliance_Self {
-				base.SelfWorkers[u.Tag] = true
-			} else {
-				base.OtherWorkers[u.Tag] = true
+			if u.Alliance != api.Alliance_Self {
+				return
 			}
+			for _, b := range b.Bases {
+				if b.HasWorker(u.Tag) {
+					b.Workers[u.Tag] = u
+					return
+				}
+			}
+
+			if !(u.IsIdle() || u.Orders[0].AbilityId == ability.Harvest_Gather_SCV || u.Orders[0].AbilityId == ability.Harvest_Return_SCV) {
+				log.Printf("leaving SCV alone. tag: %v orders: %v", u.Tag, u.Orders[0])
+				return
+			}
+
+			for _, b := range b.Bases {
+				if b.NeedsWorker() {
+					log.Printf("assigned free worker tag: %v to %v", u.Tag, b.i)
+					b.addWorker(u)
+					return
+				}
+			}
+			log.Printf("nothing to do with free worker tag: %v", u.Tag)
 		}
 	})
+
+	for _, base := range b.Bases {
+		base.step(bot)
+	}
 }
 
 // NearestBase ...

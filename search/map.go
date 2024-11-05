@@ -7,33 +7,23 @@ import (
 
 // Map ...
 type Map struct {
+	bot *botutil.Bot
 	bases
 
 	StartLocation api.Point2D
-	// EnemyStartLocations []api.Point2D
 }
 
 // NewMap ...
 func NewMap(bot *botutil.Bot) *Map {
-	m := &Map{}
+	m := &Map{
+		bot: bot,
+	}
 	m.bases = newBases(m, bot)
 	m.StartLocation = bot.Self.Structures().First().Pos2D()
 
-	// locs := bot.GameInfo().GetStartRaw().GetStartLocations()
-	// m.EnemyStartLocations = make([]api.Point2D, len(locs))
-	// for i, l := range locs {
-	// 	m.EnemyStartLocations[i] = *l
-	// }
-
-	update := func() {
-		m.bases.update(bot)
-
-		// if len(m.EnemyStartLocations) > 1 {
-		// 	bot.
-		// }
-	}
-	bot.OnAfterStep(update)
-	update()
-
 	return m
+}
+
+func (m *Map) Update() {
+	m.bases.update(m.bot)
 }
