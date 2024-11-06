@@ -176,14 +176,15 @@ func (f filteredUnits) First() Unit {
 
 type self map[api.UnitTypeID]Units
 
-func (m self) Flying() filteredUnits     { return newFilter(m, api.Alliance_Self).Flying() }
-func (m self) Ground() filteredUnits     { return newFilter(m, api.Alliance_Self).Ground() }
-func (m self) CanAttack() filteredUnits  { return newFilter(m, api.Alliance_Self).CanAttack() }
-func (m self) Passive() filteredUnits    { return newFilter(m, api.Alliance_Self).Passive() }
-func (m self) Units() filteredUnits      { return newFilter(m, api.Alliance_Self).Units() }
-func (m self) Structures() filteredUnits { return newFilter(m, api.Alliance_Self).Structures() }
-func (m self) All() Units                { return newFilter(m, api.Alliance_Self).All() }
-func (m self) First() Unit               { return newFilter(m, api.Alliance_Self).First() }
+func (m self) Flying() filteredUnits                { return newFilter(m, api.Alliance_Self).Flying() }
+func (m self) Ground() filteredUnits                { return newFilter(m, api.Alliance_Self).Ground() }
+func (m self) CanAttack() filteredUnits             { return newFilter(m, api.Alliance_Self).CanAttack() }
+func (m self) Passive() filteredUnits               { return newFilter(m, api.Alliance_Self).Passive() }
+func (m self) Units() filteredUnits                 { return newFilter(m, api.Alliance_Self).Units() }
+func (m self) Structures() filteredUnits            { return newFilter(m, api.Alliance_Self).Structures() }
+func (m self) All() Units                           { return newFilter(m, api.Alliance_Self).All() }
+func (m self) First() Unit                          { return newFilter(m, api.Alliance_Self).First() }
+func (m self) ByType(unitType api.UnitTypeID) Units { return m[unitType] }
 func (m self) Choose(filter func(Unit) bool) filteredUnits {
 	return newFilter(m, api.Alliance_Self).Choose(filter)
 }

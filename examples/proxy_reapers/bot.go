@@ -17,7 +17,7 @@ import (
 
 var (
 	GameDuration = GameLoopMin * 4
-	GameSpeed    = 20.0
+	GameSpeed    = 10.0
 
 	GameLoopMin    uint32 = 224 * 6
 	GameLoopPerSec        = time.Second * 60 / time.Duration(GameLoopMin)
@@ -35,7 +35,10 @@ type bot struct {
 
 	positionsForSupplies []api.Point2D
 	positionsForBarracks api.Point2D
-	barracksQuery        botutil.Query
+
+	rampSupply api.UnitTag
+
+	opener *opener
 }
 
 func runAgent(info client.AgentInfo) {
@@ -94,6 +97,8 @@ func (bot *bot) init() {
 	bot.main = bot.mp.NearestBase(bot.myStartLocation)
 	bot.natural = bot.main.Natural()
 
+	bot.opener = &opener{bot: bot}
+
 	log.Printf("MyLocation: %v main: %v", bot.myStartLocation, bot.main.Location)
 
 	//search.CalculateRampLocations(bot.Bot, true)
@@ -113,11 +118,13 @@ func (bot *bot) initLocations() {
 func (bot *bot) findBuildingsPositions() {
 	supplies := make([]api.Point2D, 0)
 	if bot.myStartLocation.X < 100 {
-		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: -6, Y: -16}))
 		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: -3, Y: -13}))
+		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: -6, Y: -16}))
+		bot.positionsForBarracks = bot.myStartLocation.Add(api.Vec2D{X: -5, Y: -13})
 	} else {
-		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -16}))
 		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: +2, Y: -13}))
+		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -16}))
+		bot.positionsForBarracks = bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -13})
 	}
 	bot.positionsForSupplies = supplies
 
@@ -145,21 +152,49 @@ func (bot *bot) findBuildingsPositions() {
 //	return bot.Self[terran.SCV].Choose(func(u botutil.Unit) bool { return u.IsGathering() }).First()
 //}
 
+func (bot *bot) buildSCVs() {
+	ccs := bot.Self.Structures().Choose(func(unit botutil.Unit) bool {
+		return unit.IsFlying == false && unit.BuildProgress == 1.0 &&
+			(unit.UnitType == terran.OrbitalCommand || unit.UnitType == terran.CommandCenter || unit.UnitType == terran.PlanetaryFortress)
+	}).All()
+
+	for _, cc := range ccs.Slice() {
+		if len(cc.Orders) != 0 {
+			continue
+		}
+
+		// if it's a CC, and we have a rax, we could upgrade to orbital
+		if cc.UnitType == terran.CommandCenter && bot.CanAfford(bot.ProductionCost(terran.OrbitalCommand, ability.Morph_OrbitalCommand)) {
+			rax := bot.Self.Count(terran.Barracks)
+			raxInConstruction := bot.Self.CountInProduction(terran.Barracks)
+			if rax-raxInConstruction > 0 {
+				log.Printf("morphing CC: %v", cc)
+				bot.UnitOrder(cc, ability.Morph_OrbitalCommand)
+				continue
+			} else if rax := bot.Self.ByType(terran.Barracks).First(); !rax.IsNil() && rax.BuildProgress > 0.9 {
+				// wait for rax to finish
+				continue
+			}
+		}
+
+		// TODO: add support for MULE
+
+		if bot.Self.CountAll(terran.SCV) < 30 {
+			cc.Order(ability.Train_SCV)
+		}
+	}
+}
+
 func (bot *bot) strategy2() {
 	//defer func() { search.ShowDebugBoxes(bot.Bot) }()
 	bot.mp.Update()
+	bot.opener.strategy()
 
-	if bot.Self.CountAll(terran.SCV) < 30 {
-		if !bot.BuildUnit(terran.OrbitalCommand, ability.Train_SCV) &&
-			!bot.BuildUnit(terran.CommandCenter, ability.Train_SCV) &&
-			!bot.BuildUnit(terran.PlanetaryFortress, ability.Train_SCV) {
-			// do nothing
-		}
-	}
+	bot.buildSCVs()
 
 	// check if we should build supply depots
 	depotCount := bot.Self.Count(terran.SupplyDepot) + bot.Self.Count(terran.SupplyDepotLowered)
-	if bot.FoodLeft() < 6 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 && depotCount < len(bot.positionsForSupplies) {
+	if bot.FoodCap > 23 && bot.FoodLeft() < 6 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 && depotCount < len(bot.positionsForSupplies) {
 		if bot.CanAfford(bot.ProductionCost(terran.SupplyDepot, ability.Build_SupplyDepot)) {
 			worker := bot.main.GetWorker()
 			if worker.IsNil() {
@@ -360,4 +395,110 @@ func (bot *bot) getTargets() botutil.Units {
 
 	// Otherwise just kill all the buildings
 	return bot.Enemy.Ground().Structures().All()
+}
+
+type opener struct {
+	*bot
+	step       int
+	finishStep int
+
+	initialRally   api.Point2D
+	initialWorkers botutil.Units
+
+	builder api.UnitTag
+}
+
+func (bot *opener) advance() {
+	bot.step += 1
+	log.Printf("moving opener to step %v", bot.step)
+}
+
+func (bot *opener) strategy() {
+	if bot.step != 0 && bot.step == bot.finishStep {
+		return
+	}
+	step := 0
+	currentStep := func() int {
+		a := step
+		step += 1
+		return a
+	}
+
+	// initialize initial workers
+	if bot.step == currentStep() {
+		bot.initialWorkers = bot.Self.All()
+		bot.initialRally = bot.main.TownHall.RallyTargets[0].Point.ToPoint2D()
+		// change rally to depo location
+		bot.main.TownHall.OrderPos(ability.Rally_CommandCenter, bot.positionsForSupplies[0])
+
+		bot.advance()
+	}
+
+	// try to fetch the newly created SCV and mark it as the builder
+	if bot.step == currentStep() {
+		scvs := bot.Self.All()
+		if bot.initialWorkers.Len() == scvs.Len() {
+			return
+		}
+
+		// figure out which SCV is new
+		newWorker := scvs.Drop(func(u botutil.Unit) bool {
+			return !bot.initialWorkers.ByTag(u.Tag).IsNil()
+		}).First()
+
+		bot.main.RemoveWorker(newWorker)
+		bot.builder = newWorker.Tag
+
+		// change rally to mineral patch
+		bot.main.TownHall.OrderPos(ability.Rally_CommandCenter, bot.initialRally)
+
+		bot.advance()
+	}
+
+	// short circuit if we don't have a builder
+	if bot.step < step {
+		return
+	}
+
+	builder := bot.Self.All().ByTag(bot.builder)
+	if bot.main.HasWorker(builder.Tag) {
+		bot.main.RemoveWorker(builder)
+	}
+
+	// move to depo location & build depo at 14
+	if bot.step == currentStep() {
+		builder.MoveTo(bot.positionsForSupplies[0], 0)
+		if bot.FoodUsed == 14 && bot.CanAfford(bot.ProductionCost(terran.SupplyDepot, ability.Build_SupplyDepot)) {
+			builder.BuildUnitAt(ability.Build_SupplyDepot, bot.positionsForSupplies[0])
+			bot.advance()
+		}
+	}
+
+	// wait for depo to finish
+	if bot.step == currentStep() {
+		if bot.Self.Count(terran.SupplyDepot) == 1 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 {
+			// set ramp depo & lower it
+			ramp := bot.Self.Structures().Choose(func(unit botutil.Unit) bool {
+				return unit.UnitType == terran.SupplyDepot
+			}).First()
+			if ramp.IsNil() {
+				log.Printf("ramp is nil!!!")
+				return
+			}
+			log.Printf("found ramp! %v", ramp)
+			bot.rampSupply = ramp.Tag
+			bot.UnitOrder(ramp, ability.Morph_SupplyDepot_Lower)
+			bot.advance()
+		}
+	}
+
+	// build rax
+	if bot.step == currentStep() {
+		if bot.FoodUsed == 16 && bot.CanAfford(bot.ProductionCost(terran.Barracks, ability.Build_Barracks)) {
+			builder.BuildUnitAt(ability.Build_Barracks, bot.positionsForBarracks)
+			bot.advance()
+		}
+	}
+
+	bot.finishStep = step
 }
