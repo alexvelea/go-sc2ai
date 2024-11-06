@@ -90,6 +90,7 @@ func (b *bases) update(bot *botutil.Bot) {
 			if u.Alliance != api.Alliance_Self {
 				return
 			}
+			// update workers for all bases, if a worker is assigned
 			for _, b := range b.Bases {
 				if b.HasWorker(u.Tag) {
 					b.Workers[u.Tag] = u
@@ -97,21 +98,74 @@ func (b *bases) update(bot *botutil.Bot) {
 				}
 			}
 
-			if !(u.IsIdle() || u.Orders[0].AbilityId == ability.Harvest_Gather_SCV || u.Orders[0].AbilityId == ability.Harvest_Return_SCV) {
-				log.Printf("leaving SCV alone. tag: %v orders: %v", u.Tag, u.Orders[0])
+			// check if worker needs to be assigned
+			if !u.IsIdle() && !(u.Orders[0].AbilityId == ability.Harvest_Gather_SCV || u.Orders[0].AbilityId == ability.Harvest_Return_SCV) {
+				//log.Printf("leaving SCV alone. tag: %v orders: %v", u.Tag, u.Orders[0])
 				return
 			}
 
-			for _, b := range b.Bases {
-				if b.NeedsWorker() {
-					log.Printf("assigned free worker tag: %v to %v", u.Tag, b.i)
-					b.addWorker(u)
-					return
-				}
+			// assign worker to the nearest base which would want one
+			base := b.NearestBaseIf(u.Pos2D(), func(b *Base) bool {
+				return b.NeedsWorker(false)
+			})
+			if base != nil {
+				log.Printf("assigned free worker to unsaturated mining tag: %v to %v workersInBase: %v", u.Tag, base.i, base.NumWorkers())
+				base.addWorker(u)
+				return
 			}
+
+			base = b.NearestBaseIf(u.Pos2D(), func(b *Base) bool {
+				return b.NeedsOverSaturatedWorker(false)
+			})
+			if base != nil {
+				log.Printf("assigned free worker to oversaturated mining tag: %v to %v workersInBase: %v", u.Tag, base.i, base.NumWorkers())
+				base.addWorker(u)
+				return
+			}
+
 			log.Printf("nothing to do with free worker tag: %v", u.Tag)
 		}
 	})
+
+	// try to move workers from build bases to bases in construction
+	// the number of steps required to move from one point to another, given SCV acceleration is
+	// pos2.Distance(pos1)/builder.MovementSpeed*16+16
+	// if this is lower than the StepsUntilFinished we should assign them
+	for _, inConstruction := range b.Bases {
+		if !inConstruction.IsUnderConstruction() {
+			continue
+		}
+
+		for _, base := range b.Bases {
+			if !base.IsFinished() {
+				continue
+			}
+			//log.Printf("found inConstruction: %v and our own base: %v isOverSaturated: %v workers: %v", inConstruction.i, base.i, base.IsOverSaturated(), len(base.Workers))
+
+			for {
+				// has all the workers it needs
+				if !inConstruction.NeedsWorker(true) {
+					break
+				}
+				if !base.IsOverSaturated() {
+					break
+				}
+
+				worker := base.PeakWorker()
+				distance := worker.Pos2D().Distance(inConstruction.Location)
+				travelTime := int(distance/worker.MovementSpeed*16 + 16)
+				untilFinish := inConstruction.StepsUntilFinished()
+				if travelTime < untilFinish {
+					break
+				}
+
+				// move worker from one base to another
+				log.Printf("moving over saturated worker: %v from base: %v to: %v travel: %v untilFinish: %v", worker.Tag, base.i, inConstruction.i, travelTime, untilFinish)
+				worker = base.GetWorker()
+				inConstruction.addWorker(worker)
+			}
+		}
+	}
 
 	for _, base := range b.Bases {
 		base.step(bot)

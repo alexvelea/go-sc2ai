@@ -5,7 +5,6 @@ import (
 
 	"github.com/chippydip/go-sc2ai/api"
 	"github.com/chippydip/go-sc2ai/botutil"
-	"github.com/chippydip/go-sc2ai/enums/ability"
 	"github.com/chippydip/go-sc2ai/enums/unit"
 )
 
@@ -62,6 +61,7 @@ func UnitPlacementSize(u botutil.Unit) api.Size2DI {
 
 // PlacementGrid ...
 type PlacementGrid struct {
+	bot        *botutil.Bot
 	raw        api.ImageDataBits
 	grid       api.ImageDataBits
 	structures map[api.UnitTag]structureInfo
@@ -76,81 +76,14 @@ type structureInfo struct {
 func NewPlacementGrid(bot *botutil.Bot) *PlacementGrid {
 	raw := bot.GameInfo().GetStartRaw().GetPlacementGrid().Bits()
 	pg := &PlacementGrid{
+		bot:        bot,
 		raw:        raw,
 		grid:       raw.Copy(),
 		structures: map[api.UnitTag]structureInfo{},
 	}
-
-	update := func() {
-		// Remove any units that are gone or have changed type or position
-		for k, v := range pg.structures {
-			if u := bot.UnitByTag(k); u.IsNil() || !u.IsStructure() || u.Pos2D() != v.point || UnitPlacementSize(u) != v.size {
-				pg.markGrid(v.point, v.size, true)
-				delete(pg.structures, k)
-			}
-		}
-
-		// (Re-)add new units or ones that have changed type or position
-		bot.AllUnits().Each(func(u botutil.Unit) {
-			if _, ok := pg.structures[u.Tag]; !ok && u.IsStructure() {
-				v := structureInfo{u.Pos2D(), UnitPlacementSize(u)}
-				pg.markGrid(v.point, v.size, false)
-				pg.structures[u.Tag] = v
-			}
-		})
-	}
-
-	bot.OnAfterStep(update)
-	update()
-
-	var req []*api.RequestQueryBuildingPlacement
-	var lut []api.UnitTypeID
-
-	for k, v := range pg.structures {
-		xMin, yMin := int32(v.point.X-float32(v.size.X)/2), int32(v.point.Y-float32(v.size.Y)/2)
-		xMax, yMax := xMin+v.size.X, yMin+v.size.Y
-		for y := yMin; y < yMax; y++ {
-			for x := xMin; x < xMax; x++ {
-				if pg.grid.Get(x, y) != raw.Get(x, y) {
-					req = append(req, &api.RequestQueryBuildingPlacement{
-						AbilityId: ability.Build_SensorTower,
-						TargetPos: &api.Point2D{X: float32(x) + 0.5, Y: float32(y) + 0.5},
-					})
-					lut = append(lut, bot.UnitByTag(k).UnitType)
-				}
-			}
-		}
-	}
-
-	resp := bot.Query(api.RequestQuery{
-		Placements: req,
-	})
-
-	heightMap := NewHeightMap(bot.GameInfo().StartRaw)
-	var ok, inval = 0, 0
-	for i, r := range resp.GetPlacements() {
-		var color *api.Color
-		if r.GetResult() == api.ActionResult_Success {
-			color = green
-			inval++
-		} else {
-			color = red
-			ok++
-		}
-		v := req[i].TargetPos
-		z := heightMap.Interpolate(v.X, v.Y)
-		queryBoxes = append(queryBoxes, &api.DebugBox{
-			Color: color,
-			Min:   &api.Point{X: v.X - 0.375, Y: v.Y - 0.375, Z: z},
-			Max:   &api.Point{X: v.X + 0.375, Y: v.Y + 0.375, Z: z + 1},
-		})
-	}
-	log.Printf("ok: %v, inval: %v", ok, inval)
-
+	pg.Update()
 	return pg
 }
-
-var queryBoxes []*api.DebugBox
 
 func (pg *PlacementGrid) markGrid(pos api.Point2D, size api.Size2DI, value bool) {
 	xMin, yMin := int32(pos.X-float32(size.X)/2), int32(pos.Y-float32(size.Y)/2)
@@ -182,33 +115,21 @@ func (pg *PlacementGrid) CanPlace(u botutil.Unit, pos api.Point2D) bool {
 	return pg.checkGrid(pos, UnitPlacementSize(u), true)
 }
 
-// DebugPrint ...
-func (pg *PlacementGrid) DebugPrint(bot *botutil.Bot) {
-	heightMap := NewHeightMap(bot.GameInfo().StartRaw)
-
-	var boxes []*api.DebugBox
-	for _, v := range pg.structures {
-		z := heightMap.Interpolate(v.point.X, v.point.Y)
-		boxes = append(boxes, &api.DebugBox{
-			Min: &api.Point{X: v.point.X - float32(v.size.X)/2, Y: v.point.Y - float32(v.size.Y)/2, Z: z},
-			Max: &api.Point{X: v.point.X + float32(v.size.X)/2, Y: v.point.Y + float32(v.size.Y)/2, Z: z + 1},
-		})
+func (pg *PlacementGrid) Update() {
+	// Remove any units that are gone or have changed type or position
+	for k, v := range pg.structures {
+		if u := pg.bot.UnitByTag(k); u.IsNil() || !u.IsStructure() || u.Pos2D() != v.point || UnitPlacementSize(u) != v.size {
+			pg.markGrid(v.point, v.size, true)
+			delete(pg.structures, k)
+		}
 	}
 
-	bot.SendDebugCommands([]*api.DebugCommand{
-		&api.DebugCommand{
-			Command: &api.DebugCommand_Draw{
-				Draw: &api.DebugDraw{
-					Boxes: boxes,
-				},
-			},
-		},
-		&api.DebugCommand{
-			Command: &api.DebugCommand_Draw{
-				Draw: &api.DebugDraw{
-					Boxes: queryBoxes,
-				},
-			},
-		},
+	// (Re-)add new units or ones that have changed type or position
+	pg.bot.AllUnits().Each(func(u botutil.Unit) {
+		if _, ok := pg.structures[u.Tag]; !ok && u.IsStructure() {
+			v := structureInfo{u.Pos2D(), UnitPlacementSize(u)}
+			pg.markGrid(v.point, v.size, false)
+			pg.structures[u.Tag] = v
+		}
 	})
 }

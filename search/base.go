@@ -2,6 +2,7 @@ package search
 
 import (
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/chippydip/go-sc2ai/api"
@@ -120,6 +121,12 @@ func (base *Base) step(bot *botutil.Bot) {
 		worker := base.Workers[workerTag]
 		patch := base.Resources[resourceTag]
 
+		// if base is still under construction, move to the patch that needs to be mined and stay there
+		if base.IsUnderConstruction() {
+			worker.MoveTo(patch.Pos2D(), 1)
+			continue
+		}
+
 		if worker.IsCarryingResources() {
 			worker.Order(ability.Harvest_Return)
 		} else {
@@ -173,15 +180,35 @@ func (base *Base) addWorker(worker botutil.Unit) {
 
 	log.Printf("adding worker: %v i: %v", workerTag, base.i)
 
-	// prioritize minerals
-	for _, mineral := range base.Minerals {
-		if len(base.minedBy[mineral.Tag]) < 2 {
-			base.minedBy[mineral.Tag][workerTag] = true
-			base.mining[workerTag] = mineral.Tag
-			return
+	closeMinerals := func(minerals []botutil.Unit, num int) bool {
+		distances := make([]struct {
+			dist float32
+			tag  api.UnitTag
+		}, len(minerals))
+		for i := range minerals {
+			distances[i].tag = minerals[i].Tag
+			distances[i].dist = minerals[i].Pos2D().Distance(worker.Pos2D())
 		}
+		sort.Slice(distances, func(i, j int) bool {
+			return distances[i].dist < distances[j].dist
+		})
+		for _, patch := range distances {
+			if len(base.minedBy[patch.tag]) < num {
+				base.minedBy[patch.tag][workerTag] = true
+				base.mining[workerTag] = patch.tag
+				return true
+			}
+		}
+		return false
 	}
 
+	// prioritize minerals
+	if closeMinerals(base.Minerals[0:4], 2) {
+		return
+	}
+	if closeMinerals(base.Minerals[4:], 2) {
+		return
+	}
 	for _, vespene := range base.GasBuildings {
 		if len(base.minedBy[vespene.Tag]) < 3 {
 			base.minedBy[vespene.Tag][workerTag] = true
@@ -189,10 +216,24 @@ func (base *Base) addWorker(worker botutil.Unit) {
 			return
 		}
 	}
+	if closeMinerals(base.Minerals[4:], 3) {
+		return
+	}
+	if closeMinerals(base.Minerals[0:4], 3) {
+		return
+	}
 }
 
-func (base *Base) GetBuilder() botutil.Unit {
-	log.Printf("fetching i: %v builder. workers: %v", base.i, len(base.Workers))
+func (base *Base) GetWorker() botutil.Unit {
+	worker := base.PeakWorker()
+	if worker.IsNil() {
+		return worker
+	}
+	base.RemoveWorker(worker)
+	return worker
+}
+
+func (base *Base) PeakWorker() botutil.Unit {
 	for i := len(base.Minerals) - 1; i >= 0; i -= 1 {
 		mineral := base.Minerals[i]
 		mineralTag := mineral.Tag
@@ -202,19 +243,39 @@ func (base *Base) GetBuilder() botutil.Unit {
 				break
 			}
 			builder := base.Workers[unitTag]
-
-			delete(base.minedBy[mineralTag], unitTag)
-			delete(base.mining, unitTag)
-			delete(base.Workers, unitTag)
 			return builder
 		}
 	}
 	return botutil.Unit{}
 }
 
+func (base *Base) RemoveWorker(worker botutil.Unit) {
+	mineralTag := base.mining[worker.Tag]
+	unitTag := worker.Tag
+	delete(base.minedBy[mineralTag], unitTag)
+	delete(base.mining, unitTag)
+	delete(base.Workers, unitTag)
+}
+
 // IsSelfOwned returns true if the current player owns the TownHall at this base.
 func (base *Base) IsSelfOwned() bool {
 	return !base.TownHall.IsNil() && base.TownHall.Alliance == api.Alliance_Self
+}
+
+func (base *Base) IsUnderConstruction() bool {
+	return !base.TownHall.IsNil() && base.TownHall.Alliance == api.Alliance_Self && base.TownHall.BuildProgress != 1.0
+}
+
+func (base *Base) IsFinished() bool {
+	return !base.TownHall.IsNil() && base.TownHall.Alliance == api.Alliance_Self && base.TownHall.BuildProgress == 1.0
+}
+
+func (base *Base) StepsUntilFinished() int {
+	if !base.TownHall.IsNil() {
+		return int((1.0-base.TownHall.BuildProgress)*base.TownHall.BuildTime + 0.5)
+	} else {
+		return 0
+	}
 }
 
 // IsEnemyOwned returns true if the enemy player owns the TownHall at this base.
@@ -248,10 +309,36 @@ func (base *Base) HasWorker(tag api.UnitTag) bool {
 	return ok
 }
 
-func (base *Base) NeedsWorker() bool {
+func (base *Base) NumWorkers() int {
+	return len(base.mining)
+}
+
+func (base *Base) NeedsWorker(okUnderConstruction bool) bool {
 	if base.IsSelfOwned() == false {
 		return false
 	}
+	if !okUnderConstruction && base.IsUnderConstruction() {
+		return false
+	}
 	needed := len(base.Minerals)*2 + len(base.GasBuildings)*3
-	return needed > len(base.Workers)
+	return needed > len(base.mining)
+}
+
+func (base *Base) NeedsOverSaturatedWorker(okUnderConstruction bool) bool {
+	if base.IsSelfOwned() == false {
+		return false
+	}
+	if !okUnderConstruction && base.IsUnderConstruction() {
+		return false
+	}
+	needed := len(base.Minerals)*3 + len(base.GasBuildings)*3
+	return needed > len(base.mining)
+}
+
+func (base *Base) IsOverSaturated() bool {
+	if base.IsSelfOwned() == false || base.IsUnderConstruction() {
+		return false
+	}
+	needed := len(base.Minerals)*2 + len(base.GasBuildings)*3
+	return needed < len(base.mining)
 }
