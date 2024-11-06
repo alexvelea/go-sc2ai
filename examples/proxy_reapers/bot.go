@@ -16,8 +16,11 @@ import (
 )
 
 var (
-	GameLoop10Sec  uint32 = 224
-	GameLoopPerSec        = time.Second * 10 / time.Duration(GameLoop10Sec)
+	GameDuration = GameLoopMin * 4
+	GameSpeed    = 20.0
+
+	GameLoopMin    uint32 = 224 * 6
+	GameLoopPerSec        = time.Second * 60 / time.Duration(GameLoopMin)
 )
 
 type bot struct {
@@ -44,7 +47,6 @@ func runAgent(info client.AgentInfo) {
 
 	bot.init()
 	for bot.IsInGame() {
-		log.Printf("minerals: %v", bot.Minerals)
 		select {
 		case <-sigCh:
 			bot.SendDebugCommands([]*api.DebugCommand{
@@ -69,7 +71,7 @@ func runAgent(info client.AgentInfo) {
 			break
 		}
 
-		if bot.GameLoop > GameLoop10Sec*6 {
+		if bot.GameLoop > GameDuration {
 			bot.SendDebugCommands([]*api.DebugCommand{
 				{
 					Command: &api.DebugCommand_EndGame{
@@ -81,7 +83,7 @@ func runAgent(info client.AgentInfo) {
 			})
 			bot.LeaveGame()
 		}
-		<-time.After(GameLoopPerSec / 5)
+		<-time.After(GameLoopPerSec / time.Duration(GameSpeed))
 	}
 }
 
@@ -109,6 +111,16 @@ func (bot *bot) initLocations() {
 }
 
 func (bot *bot) findBuildingsPositions() {
+	supplies := make([]api.Point2D, 0)
+	if bot.myStartLocation.X < 100 {
+		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: -6, Y: -16}))
+		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: -3, Y: -13}))
+	} else {
+		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -16}))
+		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: +2, Y: -13}))
+	}
+	bot.positionsForSupplies = supplies
+
 	// Pick locations for supply depots
 	//pos := bot.myStartLocation.Offset(homeMinerals.Center(), -7)
 	//neighbors8 := pos.Offset8By(2)
@@ -134,61 +146,45 @@ func (bot *bot) findBuildingsPositions() {
 //}
 
 func (bot *bot) strategy2() {
+	//defer func() { search.ShowDebugBoxes(bot.Bot) }()
 	bot.mp.Update()
 
+	if bot.Self.CountAll(terran.SCV) < 30 {
+		if !bot.BuildUnit(terran.OrbitalCommand, ability.Train_SCV) &&
+			!bot.BuildUnit(terran.CommandCenter, ability.Train_SCV) &&
+			!bot.BuildUnit(terran.PlanetaryFortress, ability.Train_SCV) {
+			// do nothing
+		}
+	}
+
+	// check if we should build supply depots
+	depotCount := bot.Self.Count(terran.SupplyDepot) + bot.Self.Count(terran.SupplyDepotLowered)
+	if bot.FoodLeft() < 6 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 && depotCount < len(bot.positionsForSupplies) {
+		if bot.CanAfford(bot.ProductionCost(terran.SupplyDepot, ability.Build_SupplyDepot)) {
+			worker := bot.main.GetWorker()
+			if worker.IsNil() {
+				log.Printf("worker is nil!")
+				return
+			}
+			bot.mp.PlacementGrid.DebugLocationsNearPoint(bot.positionsForSupplies[depotCount], 6)
+			worker.BuildUnitAt(ability.Build_SupplyDepot, bot.positionsForSupplies[depotCount])
+		} else {
+			return
+		}
+	}
+
 	// expand to natural
-	if bot.natural.TownHall.IsNil() && bot.CanAfford(bot.ProductionCost(terran.Barracks, ability.Build_Barracks)) {
-		worker := bot.main.GetBuilder()
+	if bot.natural.TownHall.IsNil() && bot.CanAfford(bot.ProductionCost(terran.CommandCenter, ability.Build_CommandCenter)) {
+		worker := bot.main.GetWorker()
 		if worker.IsNil() {
 			log.Printf("worker is nil!")
 			return
 		}
-		worker.BuildUnitAt(ability.Build_SupplyDepot, bot.natural.Location)
+		worker.BuildUnitAt(ability.Build_CommandCenter, bot.natural.Location)
 		log.Printf("building command center! worker: %v location: %v", worker.Tag, bot.natural.Location)
 	}
-
-	// Build supply depots as needed
-	//depotCount := bot.Self.Count(terran.SupplyDepot) + bot.Self.Count(terran.SupplyDepotLowered)
-	//if bot.FoodLeft() < 6 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 && depotCount < len(bot.positionsForSupplies) {
-	//	pos := bot.positionsForSupplies[depotCount]
-	//	if scv := bot.getSCV(); !scv.IsNil() {
-	//		if !scv.BuildUnitAt(ability.Build_SupplyDepot, pos) {
-	//			return
-	//		}
-	//	}
-	//}
-
-	//for i, res := range bot.baseLocations[0].Resources.Units() {
-	//	res = bot.Neutral.Resources().ClosestTo(res.Pos.ToPoint2D())
-	//	log.Printf("i: %v harvester: %v optiomal: %v x: %v y: %v", i, res.AssignedHarvesters, res.IdealHarvesters, res.Pos.X, res.Pos.Y)
-	//}
-
-	// Units
-	//if bot.Self.CountAll(terran.SCV) < 18 {
-	//	if !bot.BuildUnit(terran.OrbitalCommand, ability.Train_SCV) &&
-	//		!bot.BuildUnit(terran.CommandCenter, ability.Train_SCV) &&
-	//		!bot.BuildUnit(terran.PlanetaryFortress, ability.Train_SCV) {
-	//		// do nothing
-	//	}
-	//}
-	//bot.BuildUnits(terran.Barracks, ability.Train_Reaper, 10)
 }
 
-//func (bot *bot) strategy() {
-//	// Update the home mineral (in case the old one mined out)
-//	bot.homeMineral = bot.Neutral.Minerals().CloserThan(10, bot.myStartLocation).First()
-//
-//	// Build supply depots as needed
-//	depotCount := bot.Self.Count(terran.SupplyDepot) + bot.Self.Count(terran.SupplyDepotLowered)
-//	if bot.FoodLeft() < 6 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 && depotCount < len(bot.positionsForSupplies) {
-//		pos := bot.positionsForSupplies[depotCount]
-//		if scv := bot.getSCV(); !scv.IsNil() {
-//			if !scv.BuildUnitAt(ability.Build_SupplyDepot, pos) {
-//				return
-//			}
-//		}
-//	}
-//
 //	// Build barracks
 //	barracksCount := bot.Self.Count(terran.Barracks)
 //	if barracksCount < 4 {
@@ -253,9 +249,6 @@ func (bot *bot) strategy2() {
 //			bot.Spend(cost)
 //		}
 //	}
-//	if supply := bot.Self[terran.SupplyDepot].First(); !supply.IsNil() && supply.IsBuilt() {
-//		supply.Order(ability.Morph_SupplyDepot_Lower)
-//	}
 //
 //	// Cast
 //	if cc := bot.Self[terran.OrbitalCommand].CanOrder(ability.Effect_CalldownMULE).First(); !cc.IsNil() {
@@ -273,7 +266,6 @@ func (bot *bot) strategy2() {
 //		}
 //	}
 //	bot.BuildUnits(terran.Barracks, ability.Train_Reaper, 10)
-//}
 
 func (bot *bot) tactics() {
 }
