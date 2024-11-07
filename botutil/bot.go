@@ -47,19 +47,20 @@ func (bot *Bot) checkVersion() {
 	if c, ok := bot.AgentInfo.(*client.Client); !ok {
 		log.Print("Skipping version check") // Should only happen when AgentInfo is mocked
 	} else {
+		_ = c
 		// Check the game version, this should be less important but still worth reporting
-		cVersion := formatVersion(c.GameVersion, c.BaseBuild)
-		if c.BaseBuild == BaseBuild && c.GameVersion == GameVersion {
-			bot.ChatTeam(fmt.Sprintf("(sc2) %v (thumbsup)", cVersion))
-		} else {
-			bot.ChatTeam(fmt.Sprintf("(sc2) %v (thumbsdown) (%v)", cVersion, formatVersion(GameVersion, BaseBuild)))
-		}
+		//cVersion := formatVersion(c.GameVersion, c.BaseBuild)
+		//if c.BaseBuild == BaseBuild && c.GameVersion == GameVersion {
+		//	bot.ChatTeam(fmt.Sprintf("(sc2) %v (thumbsup)", cVersion))
+		//} else {
+		//	bot.ChatTeam(fmt.Sprintf("(sc2) %v (thumbsdown) (%v)", cVersion, formatVersion(GameVersion, BaseBuild)))
+		//}
 
 		// It's critical that data versions match, however, or generated IDs may be wrong
-		if c.DataBuild != DataBuild || c.DataVersion != DataVersion {
-			bot.ChatTeam(fmt.Sprintf("(poo) (poo) (angry) (poo) (poo) %v:%v (scared) %v:%v",
-				c.DataBuild, c.DataVersion, DataBuild, DataVersion))
-		}
+		//if c.DataBuild != DataBuild || c.DataVersion != DataVersion {
+		//	bot.ChatTeam(fmt.Sprintf("(poo) (poo) (angry) (poo) (poo) %v:%v (scared) %v:%v",
+		//		c.DataBuild, c.DataVersion, DataBuild, DataVersion))
+		//}
 	}
 }
 

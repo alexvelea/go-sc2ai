@@ -167,6 +167,11 @@ func (b *bases) update(bot *botutil.Bot) {
 		}
 	}
 
+	// rebalance gas
+	for _, base := range b.Bases {
+		base.RebalanceToGas()
+	}
+
 	for _, base := range b.Bases {
 		base.step(bot)
 	}

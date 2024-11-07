@@ -26,8 +26,9 @@ type Base struct {
 	TownHall     botutil.Unit
 	GasBuildings map[api.Point2D]botutil.Unit
 
-	mining  map[api.UnitTag]api.UnitTag
-	minedBy map[api.UnitTag]map[api.UnitTag]bool
+	mining   map[api.UnitTag]api.UnitTag
+	minedBy  map[api.UnitTag]map[api.UnitTag]bool
+	lastSeen map[api.UnitTag]uint32
 }
 
 func newBase(m *Map, i int, loc BaseLocation) *Base {
@@ -58,6 +59,7 @@ func newBase(m *Map, i int, loc BaseLocation) *Base {
 		GasBuildings:   map[api.Point2D]botutil.Unit{},
 		mining:         make(map[api.UnitTag]api.UnitTag),
 		minedBy:        make(map[api.UnitTag]map[api.UnitTag]bool),
+		lastSeen:       make(map[api.UnitTag]uint32),
 	}
 }
 
@@ -109,17 +111,27 @@ func (base *Base) step(bot *botutil.Bot) {
 		_, ok := base.Workers[tag]
 		if !ok {
 			toDelete = append(toDelete, tag)
+		} else {
+			base.lastSeen[tag] = bot.GameLoop
 		}
 	}
 	for _, tag := range toDelete {
 		patchTag := base.mining[tag]
-		delete(base.mining, tag)
-		delete(base.minedBy[patchTag], tag)
+		// check if it's a gas geyser. if so, delay deleting by 100 steps
+		isGeyser := base.Resources[patchTag].VespeneContents > 0
+		if isGeyser == false || base.lastSeen[tag]+100 < bot.GameLoop {
+			delete(base.mining, tag)
+			delete(base.minedBy[patchTag], tag)
+		}
 	}
 
 	for workerTag, resourceTag := range base.mining {
 		worker := base.Workers[workerTag]
 		patch := base.Resources[resourceTag]
+
+		if worker.IsNil() {
+			continue
+		}
 
 		// if base is still under construction, move to the patch that needs to be mined and stay there
 		if base.IsUnderConstruction() {
@@ -130,7 +142,13 @@ func (base *Base) step(bot *botutil.Bot) {
 		if worker.IsCarryingResources() {
 			worker.Order(ability.Harvest_Return)
 		} else {
-			bot.UnitOrderTarget(worker, ability.Harvest_Gather, patch)
+			// check if it's refinery
+			refinery := base.GasBuildings[patch.Pos2D()]
+			if refinery.IsNil() {
+				bot.UnitOrderTarget(worker, ability.Harvest_Gather, patch)
+			} else {
+				bot.UnitOrderTarget(worker, ability.Harvest_Gather, refinery)
+			}
 		}
 	}
 }
@@ -178,8 +196,6 @@ func (base *Base) addWorker(worker botutil.Unit) {
 	workerTag := worker.Tag
 	base.Workers[workerTag] = worker
 
-	log.Printf("adding worker: %v i: %v", workerTag, base.i)
-
 	closeMinerals := func(minerals []botutil.Unit, num int) bool {
 		distances := make([]struct {
 			dist float32
@@ -194,6 +210,7 @@ func (base *Base) addWorker(worker botutil.Unit) {
 		})
 		for _, patch := range distances {
 			if len(base.minedBy[patch.tag]) < num {
+				log.Printf("adding to minerals worker: %v i: %v patchTag: %v", workerTag, base.i, patch.tag)
 				base.minedBy[patch.tag][workerTag] = true
 				base.mining[workerTag] = patch.tag
 				return true
@@ -202,19 +219,24 @@ func (base *Base) addWorker(worker botutil.Unit) {
 		return false
 	}
 
-	// prioritize minerals
+	for _, geyser := range base.Geysers {
+		building := base.GasBuildings[geyser.Pos2D()]
+		if building.IsNil() || building.Alliance != api.Alliance_Self || building.BuildProgress != 1.0 {
+			continue
+		}
+		if len(base.minedBy[geyser.Tag]) < 3 {
+			log.Printf("adding to gas worker: %v i: %v patchTag: %v", workerTag, base.i, geyser.Tag)
+			base.minedBy[geyser.Tag][workerTag] = true
+			base.mining[workerTag] = geyser.Tag
+			return
+		}
+	}
+
 	if closeMinerals(base.Minerals[0:4], 2) {
 		return
 	}
 	if closeMinerals(base.Minerals[4:], 2) {
 		return
-	}
-	for _, vespene := range base.GasBuildings {
-		if len(base.minedBy[vespene.Tag]) < 3 {
-			base.minedBy[vespene.Tag][workerTag] = true
-			base.mining[workerTag] = vespene.Tag
-			return
-		}
 	}
 	if closeMinerals(base.Minerals[4:], 3) {
 		return
@@ -304,6 +326,8 @@ func (base *Base) WalkDistance(other *Base) float32 {
 	return base.m.distance(base.i, other.i)
 }
 
+// Workers
+
 func (base *Base) HasWorker(tag api.UnitTag) bool {
 	_, ok := base.mining[tag]
 	return ok
@@ -320,7 +344,7 @@ func (base *Base) NeedsWorker(okUnderConstruction bool) bool {
 	if !okUnderConstruction && base.IsUnderConstruction() {
 		return false
 	}
-	needed := len(base.Minerals)*2 + len(base.GasBuildings)*3
+	needed := len(base.Minerals)*2 + base.NumGasGeysers()*3
 	return needed > len(base.mining)
 }
 
@@ -331,7 +355,7 @@ func (base *Base) NeedsOverSaturatedWorker(okUnderConstruction bool) bool {
 	if !okUnderConstruction && base.IsUnderConstruction() {
 		return false
 	}
-	needed := len(base.Minerals)*3 + len(base.GasBuildings)*3
+	needed := len(base.Minerals)*3 + base.NumGasGeysers()*3
 	return needed > len(base.mining)
 }
 
@@ -339,6 +363,48 @@ func (base *Base) IsOverSaturated() bool {
 	if base.IsSelfOwned() == false || base.IsUnderConstruction() {
 		return false
 	}
-	needed := len(base.Minerals)*2 + len(base.GasBuildings)*3
+	needed := len(base.Minerals)*2 + base.NumGasGeysers()*3
 	return needed < len(base.mining)
+}
+
+// Gas
+
+func (base *Base) RequiresGasGeyser() bool {
+	return (len(base.Geysers) - len(base.GasBuildings)) > 0
+}
+
+func (base *Base) NumGasGeysers() int {
+	num := 0
+	for _, building := range base.GasBuildings {
+		// only could own buildings
+		if building.Alliance != api.Alliance_Self || building.BuildProgress != 1.0 {
+			continue
+		}
+		num += 1
+	}
+	return num
+}
+
+func (base *Base) GetFreeGasGeyserPosition() botutil.Unit {
+	for _, geyser := range base.Geysers {
+		_, ok := base.GasBuildings[geyser.Pos2D()]
+		if !ok {
+			return geyser
+		}
+	}
+	return botutil.Unit{}
+}
+
+func (base *Base) RebalanceToGas() {
+	for _, geyser := range base.Geysers {
+		building := base.GasBuildings[geyser.Pos2D()]
+		if building.IsNil() || building.Alliance != api.Alliance_Self || building.BuildProgress != 1.0 {
+			continue
+		}
+		for len(base.minedBy[geyser.Tag]) < 3 {
+			log.Printf("moving worker to gas -- current workers: %v\n", len(base.minedBy[geyser.Tag]))
+			worker := base.GetWorker()
+			base.addWorker(worker)
+		}
+	}
 }

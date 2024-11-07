@@ -14,5 +14,5 @@ func main() {
 	// Create the agent and then start the game
 	botutil.SetGameVersion()
 	agent := client.AgentFunc(runAgent)
-	runner.RunAgent(client.NewParticipant(api.Race_Terran, agent, "ProxyReapers"))
+	runner.RunAgent(client.NewParticipant(api.Race_Terran, agent, "Summer"))
 }

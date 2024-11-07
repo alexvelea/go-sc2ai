@@ -164,11 +164,10 @@ func (bot *bot) buildSCVs() {
 		}
 
 		// if it's a CC, and we have a rax, we could upgrade to orbital
-		if cc.UnitType == terran.CommandCenter && bot.CanAfford(bot.ProductionCost(terran.OrbitalCommand, ability.Morph_OrbitalCommand)) {
+		if cc.UnitType == terran.CommandCenter && bot.CanAfford(bot.ProductionCost(terran.CommandCenter, ability.Morph_OrbitalCommand)) {
 			rax := bot.Self.Count(terran.Barracks)
 			raxInConstruction := bot.Self.CountInProduction(terran.Barracks)
 			if rax-raxInConstruction > 0 {
-				log.Printf("morphing CC: %v", cc)
 				bot.UnitOrder(cc, ability.Morph_OrbitalCommand)
 				continue
 			} else if rax := bot.Self.ByType(terran.Barracks).First(); !rax.IsNil() && rax.BuildProgress > 0.9 {
@@ -186,7 +185,7 @@ func (bot *bot) buildSCVs() {
 }
 
 func (bot *bot) strategy2() {
-	//defer func() { search.ShowDebugBoxes(bot.Bot) }()
+	defer func() { search.ShowDebugBoxes(bot.Bot) }()
 	bot.mp.Update()
 	bot.opener.strategy()
 
@@ -261,30 +260,6 @@ func (bot *bot) strategy2() {
 //		}
 //	}
 //
-//	// Build a refinery for every two barracks
-//	refineryCount := bot.Self.Count(terran.Refinery)
-//	if refineryCount < (barracksCount+1)/2 {
-//		// Find first geyser that is close to my base, but it doesn't have Refinery on top of it
-//		if geyser := bot.Neutral.Vespene().CloserThan(10, bot.myStartLocation).Choose(func(u botutil.Unit) bool {
-//			return bot.Self[terran.Refinery].CloserThan(1, u.Pos2D()).First().IsNil()
-//		}).First(); !geyser.IsNil() {
-//			if scv := bot.getSCV(); !scv.IsNil() && !scv.BuildUnitOn(ability.Build_Refinery, geyser) {
-//				return
-//			}
-//		}
-//	}
-//
-//	// Morph
-//	cost := bot.ProductionCost(terran.CommandCenter, ability.Morph_OrbitalCommand)
-//	if bot.Self.CountInProduction(terran.Reaper) >= 2 && bot.CanAfford(cost) {
-//		if cc := bot.Self[terran.CommandCenter].Choose(func(u botutil.Unit) bool {
-//			return u.IsBuilt() && u.IsIdle()
-//		}).First(); !cc.IsNil() {
-//			cc.Order(ability.Morph_OrbitalCommand)
-//			bot.Spend(cost)
-//		}
-//	}
-//
 //	// Cast
 //	if cc := bot.Self[terran.OrbitalCommand].CanOrder(ability.Effect_CalldownMULE).First(); !cc.IsNil() {
 //		if !bot.homeMineral.IsNil() {
@@ -292,14 +267,6 @@ func (bot *bot) strategy2() {
 //		}
 //	}
 //
-//	// Units
-//	if bot.Self.CountAll(terran.SCV) < 18 {
-//		if !bot.BuildUnit(terran.OrbitalCommand, ability.Train_SCV) &&
-//			!bot.BuildUnit(terran.CommandCenter, ability.Train_SCV) &&
-//			!bot.BuildUnit(terran.PlanetaryFortress, ability.Train_SCV) {
-//			// do nothing
-//		}
-//	}
 //	bot.BuildUnits(terran.Barracks, ability.Train_Reaper, 10)
 
 func (bot *bot) tactics() {
@@ -398,6 +365,7 @@ func (bot *bot) getTargets() botutil.Units {
 }
 
 type opener struct {
+	stepStrategy
 	*bot
 	step       int
 	finishStep int
@@ -405,80 +373,68 @@ type opener struct {
 	initialRally   api.Point2D
 	initialWorkers botutil.Units
 
-	builder api.UnitTag
+	positionForRefinery botutil.Unit
+
+	builder         api.UnitTag
+	refineryBuilder api.UnitTag
 }
 
-func (bot *opener) advance() {
-	bot.step += 1
-	log.Printf("moving opener to step %v", bot.step)
-}
-
-func (bot *opener) strategy() {
-	if bot.step != 0 && bot.step == bot.finishStep {
+func (o *opener) strategy() {
+	if o.finished() {
 		return
-	}
-	step := 0
-	currentStep := func() int {
-		a := step
-		step += 1
-		return a
 	}
 
 	// initialize initial workers
-	if bot.step == currentStep() {
-		bot.initialWorkers = bot.Self.All()
-		bot.initialRally = bot.main.TownHall.RallyTargets[0].Point.ToPoint2D()
+	if o.now() {
+		o.initialWorkers = o.Self.All()
+		o.initialRally = o.main.TownHall.RallyTargets[0].Point.ToPoint2D()
 		// change rally to depo location
-		bot.main.TownHall.OrderPos(ability.Rally_CommandCenter, bot.positionsForSupplies[0])
+		o.main.TownHall.OrderPos(ability.Rally_CommandCenter, o.positionsForSupplies[0])
 
-		bot.advance()
+		o.advance()
 	}
 
 	// try to fetch the newly created SCV and mark it as the builder
-	if bot.step == currentStep() {
-		scvs := bot.Self.All()
-		if bot.initialWorkers.Len() == scvs.Len() {
+	if o.now() {
+		scvs := o.Self.All()
+		if o.initialWorkers.Len() == scvs.Len() {
 			return
 		}
 
 		// figure out which SCV is new
 		newWorker := scvs.Drop(func(u botutil.Unit) bool {
-			return !bot.initialWorkers.ByTag(u.Tag).IsNil()
+			return !o.initialWorkers.ByTag(u.Tag).IsNil()
 		}).First()
 
-		bot.main.RemoveWorker(newWorker)
-		bot.builder = newWorker.Tag
+		o.main.RemoveWorker(newWorker)
+		o.builder = newWorker.Tag
 
 		// change rally to mineral patch
-		bot.main.TownHall.OrderPos(ability.Rally_CommandCenter, bot.initialRally)
+		o.main.TownHall.OrderPos(ability.Rally_CommandCenter, o.initialRally)
 
-		bot.advance()
+		o.advance()
 	}
 
 	// short circuit if we don't have a builder
-	if bot.step < step {
-		return
-	}
-
-	builder := bot.Self.All().ByTag(bot.builder)
-	if bot.main.HasWorker(builder.Tag) {
-		bot.main.RemoveWorker(builder)
+	builder := o.Self.All().ByTag(o.builder)
+	if !builder.IsNil() && o.main.HasWorker(builder.Tag) {
+		o.main.RemoveWorker(builder)
 	}
 
 	// move to depo location & build depo at 14
-	if bot.step == currentStep() {
-		builder.MoveTo(bot.positionsForSupplies[0], 0)
-		if bot.FoodUsed == 14 && bot.CanAfford(bot.ProductionCost(terran.SupplyDepot, ability.Build_SupplyDepot)) {
-			builder.BuildUnitAt(ability.Build_SupplyDepot, bot.positionsForSupplies[0])
-			bot.advance()
+	if o.now() {
+		builder.MoveTo(o.positionsForSupplies[0], 0)
+		if o.FoodUsed == 14 && o.CanAfford(o.ProductionCost(terran.SupplyDepot, ability.Build_SupplyDepot)) {
+			builder.BuildUnitAt(ability.Build_SupplyDepot, o.positionsForSupplies[0])
+			o.advance()
 		}
 	}
 
 	// wait for depo to finish
-	if bot.step == currentStep() {
-		if bot.Self.Count(terran.SupplyDepot) == 1 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 {
+	if o.now() {
+		if o.Self.Count(terran.SupplyDepot) == 1 && o.Self.CountInProduction(terran.SupplyDepot) == 0 {
 			// set ramp depo & lower it
-			ramp := bot.Self.Structures().Choose(func(unit botutil.Unit) bool {
+			ramp := o.Self.Structures().Choose(func(unit botutil.Unit) bool {
 				return unit.UnitType == terran.SupplyDepot
 			}).First()
 			if ramp.IsNil() {
@@ -486,19 +442,71 @@ func (bot *opener) strategy() {
 				return
 			}
 			log.Printf("found ramp! %v", ramp)
-			bot.rampSupply = ramp.Tag
-			bot.UnitOrder(ramp, ability.Morph_SupplyDepot_Lower)
-			bot.advance()
+			o.rampSupply = ramp.Tag
+			o.UnitOrder(ramp, ability.Morph_SupplyDepot_Lower)
+			o.advance()
 		}
 	}
 
 	// build rax
-	if bot.step == currentStep() {
-		if bot.FoodUsed == 16 && bot.CanAfford(bot.ProductionCost(terran.Barracks, ability.Build_Barracks)) {
-			builder.BuildUnitAt(ability.Build_Barracks, bot.positionsForBarracks)
-			bot.advance()
+	if o.now() {
+		if o.FoodUsed == 16 && o.CanAfford(o.ProductionCost(terran.Barracks, ability.Build_Barracks)) {
+			builder.BuildUnitAt(ability.Build_Barracks, o.positionsForBarracks)
+			o.builder = api.UnitTag(0)
+			o.advance()
 		}
 	}
 
-	bot.finishStep = step
+	// == build first refinery ==
+
+	// get refinery builder & location
+	if o.now() {
+		o.refineryBuilder = o.main.GetWorker().Tag
+		o.positionForRefinery = o.main.GetFreeGasGeyserPosition()
+		o.advance()
+	}
+
+	// try to build refinery
+	if o.now() {
+		builder = o.Self.All().ByTag(o.refineryBuilder)
+		if !builder.IsNil() && o.main.HasWorker(builder.Tag) {
+			o.main.RemoveWorker(builder)
+		}
+
+		if o.CanAfford(o.ProductionCost(terran.Refinery, ability.Build_Refinery)) {
+			builder.BuildUnitOn(ability.Build_Refinery, o.positionForRefinery)
+			o.refineryBuilder = api.UnitTag(0)
+			o.advance()
+
+			// force next iteration now
+			return
+		} else {
+			builder.MoveTo(o.positionForRefinery.Pos2D(), 1)
+		}
+	}
+
+	// == build second refinery ==
+
+	// get refinery builder & location
+	if o.now() {
+		o.refineryBuilder = o.main.GetWorker().Tag
+		o.positionForRefinery = o.main.GetFreeGasGeyserPosition()
+		o.advance()
+	}
+
+	// try to build refinery
+	if o.now() {
+		builder = o.Self.All().ByTag(o.refineryBuilder)
+		if !builder.IsNil() && o.main.HasWorker(builder.Tag) {
+			o.main.RemoveWorker(builder)
+		}
+
+		if o.CanAfford(o.ProductionCost(terran.Refinery, ability.Build_Refinery)) {
+			builder.BuildUnitOn(ability.Build_Refinery, o.positionForRefinery)
+			o.refineryBuilder = api.UnitTag(0)
+			o.advance()
+		} else {
+			builder.MoveTo(o.positionForRefinery.Pos2D(), 1)
+		}
+	}
 }
