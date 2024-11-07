@@ -172,6 +172,7 @@ func (b *bases) update(bot *botutil.Bot) {
 		base.RebalanceToGas()
 	}
 
+	// step
 	for _, base := range b.Bases {
 		base.step(bot)
 	}
@@ -214,4 +215,14 @@ func (b *bases) NearestEnemyBase(pos api.Point2D) *Base {
 	return b.NearestBaseIf(pos, func(e *Base) bool {
 		return !e.TownHall.IsNil() && e.TownHall.Alliance == api.Alliance_Enemy
 	})
+}
+
+func (b *bases) MULEBase(pos api.Point2D) *Base {
+	best, maxDist := (*Base)(nil), float32(-10)
+	for _, e := range b.Bases {
+		if dist := pos.Distance2(e.Location); dist > maxDist && e.IsFinished() && len(e.Minerals) > 0 {
+			best, maxDist = e, dist
+		}
+	}
+	return best
 }

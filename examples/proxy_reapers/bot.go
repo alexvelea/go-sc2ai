@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	GameDuration = GameLoopMin * 4
-	GameSpeed    = 10.0
+	GameDuration = GameLoopMin * 5
+	GameSpeed    = 100.0
 
 	GameLoopMin    uint32 = 224 * 6
 	GameLoopPerSec        = time.Second * 60 / time.Duration(GameLoopMin)
@@ -176,7 +176,9 @@ func (bot *bot) buildSCVs() {
 			}
 		}
 
-		// TODO: add support for MULE
+		if cc.UnitType == terran.OrbitalCommand && cc.CanOrder(ability.Effect_CalldownMULE) {
+			cc.OrderTarget(ability.Effect_CalldownMULE, bot.mp.MULEBase(bot.main.Location).MULEPatch())
+		}
 
 		if bot.Self.CountAll(terran.SCV) < 30 {
 			cc.Order(ability.Train_SCV)
@@ -190,6 +192,8 @@ func (bot *bot) strategy2() {
 	bot.opener.strategy()
 
 	bot.buildSCVs()
+
+	bot.AllUnits()
 
 	// check if we should build supply depots
 	depotCount := bot.Self.Count(terran.SupplyDepot) + bot.Self.Count(terran.SupplyDepotLowered)

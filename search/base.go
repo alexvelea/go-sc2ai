@@ -326,6 +326,17 @@ func (base *Base) WalkDistance(other *Base) float32 {
 	return base.m.distance(base.i, other.i)
 }
 
+func (base *Base) MULEPatch() botutil.Unit {
+	indices := make([]int, len(base.Minerals))
+	for i := range base.Minerals {
+		indices[i] = i
+	}
+	sort.Slice(indices, func(i, j int) bool {
+		return base.Minerals[indices[i]].MineralContents > base.Minerals[indices[j]].MineralContents
+	})
+	return base.Minerals[indices[0]]
+}
+
 // Workers
 
 func (base *Base) HasWorker(tag api.UnitTag) bool {
