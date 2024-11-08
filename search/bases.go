@@ -9,9 +9,10 @@ import (
 )
 
 type bases struct {
-	Bases     []*Base
-	distances []float32 // from i <-> j where i < j at index j*(j-1)/2 + i
-	cache     map[api.Point2D]*Base
+	Bases       []*Base
+	distances   []float32 // from i <-> j where i < j at index j*(j-1)/2 + i
+	cache       map[api.Point2D]*Base
+	usedWorkers map[api.UnitTag]bool
 }
 
 func (b *bases) distance(i, j int) float32 {
@@ -103,13 +104,15 @@ func (b *bases) update(bot *botutil.Bot) {
 				//log.Printf("leaving SCV alone. tag: %v orders: %v", u.Tag, u.Orders[0])
 				return
 			}
+			if b.usedWorkers[u.Tag] == true {
+				return
+			}
 
 			// assign worker to the nearest base which would want one
 			base := b.NearestBaseIf(u.Pos2D(), func(b *Base) bool {
 				return b.NeedsWorker(false)
 			})
 			if base != nil {
-				log.Printf("assigned free worker to unsaturated mining tag: %v to %v workersInBase: %v", u.Tag, base.i, base.NumWorkers())
 				base.addWorker(u)
 				return
 			}
@@ -118,7 +121,6 @@ func (b *bases) update(bot *botutil.Bot) {
 				return b.NeedsOverSaturatedWorker(false)
 			})
 			if base != nil {
-				log.Printf("assigned free worker to oversaturated mining tag: %v to %v workersInBase: %v", u.Tag, base.i, base.NumWorkers())
 				base.addWorker(u)
 				return
 			}
@@ -176,6 +178,8 @@ func (b *bases) update(bot *botutil.Bot) {
 	for _, base := range b.Bases {
 		base.step(bot)
 	}
+
+	b.usedWorkers = make(map[api.UnitTag]bool)
 }
 
 // NearestBase ...
@@ -225,4 +229,14 @@ func (b *bases) MULEBase(pos api.Point2D) *Base {
 		}
 	}
 	return best
+}
+
+func (b *bases) MarkWorkerAsUsed(worker botutil.Unit) {
+	if worker.IsNil() {
+		return
+	}
+	b.usedWorkers[worker.Tag] = true
+	for _, base := range b.Bases {
+		base.RemoveWorker(worker)
+	}
 }

@@ -19,8 +19,9 @@ var (
 	GameDuration = GameLoopMin * 5
 	GameSpeed    = 100.0
 
-	GameLoopMin    uint32 = 224 * 6
-	GameLoopPerSec        = time.Second * 60 / time.Duration(GameLoopMin)
+	GameLoopMin uint32  = 224 * 6
+	GameLoopPer         = time.Second * 60 / time.Duration(GameLoopMin)
+	StepsPerSec float32 = float32(GameLoopMin) / 60
 )
 
 type bot struct {
@@ -33,12 +34,13 @@ type bot struct {
 	myStartLocation    api.Point2D
 	enemyStartLocation api.Point2D
 
-	positionsForSupplies []api.Point2D
-	positionsForBarracks api.Point2D
+	positionsForSupplies   []api.Point2D
+	positionsForProduction []api.Point2D
+	defendPoint            api.Point2D
 
 	rampSupply api.UnitTag
 
-	opener *opener
+	strategies []Strategy
 }
 
 func runAgent(info client.AgentInfo) {
@@ -66,7 +68,7 @@ func runAgent(info client.AgentInfo) {
 		default:
 		}
 
-		bot.strategy2()
+		bot.Strategy()
 		bot.tactics()
 
 		if err := bot.Step(1); err != nil {
@@ -86,7 +88,7 @@ func runAgent(info client.AgentInfo) {
 			})
 			bot.LeaveGame()
 		}
-		<-time.After(GameLoopPerSec / time.Duration(GameSpeed))
+		<-time.After(GameLoopPer / time.Duration(GameSpeed))
 	}
 }
 
@@ -97,7 +99,10 @@ func (bot *bot) init() {
 	bot.main = bot.mp.NearestBase(bot.myStartLocation)
 	bot.natural = bot.main.Natural()
 
-	bot.opener = &opener{bot: bot}
+	bot.strategies = append(bot.strategies, &raxFE{bot: bot})
+	bot.strategies = append(bot.strategies, &firstRaxMarineThanReactor{bot: bot})
+	bot.strategies = append(bot.strategies, &secondRaxTechLabDepot{bot: bot})
+	bot.strategies = append(bot.strategies, &factoryStarPortReactor{bot: bot})
 
 	log.Printf("MyLocation: %v main: %v", bot.myStartLocation, bot.main.Location)
 
@@ -116,17 +121,40 @@ func (bot *bot) initLocations() {
 }
 
 func (bot *bot) findBuildingsPositions() {
-	supplies := make([]api.Point2D, 0)
 	if bot.myStartLocation.X < 100 {
-		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: -3, Y: -13}))
-		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: -6, Y: -16}))
-		bot.positionsForBarracks = bot.myStartLocation.Add(api.Vec2D{X: -5, Y: -13})
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -3, Y: -13}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -6, Y: -16}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -11, Y: -6}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -11, Y: -8}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -11, Y: -10}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -11, Y: -12}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -11, Y: -14}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: -11, Y: -16}))
+
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: -7, Y: -13}))
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -9}))
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -5}))
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -1}))
+
+		bot.defendPoint = bot.natural.Location.Add(api.Vec2D{X: +10, Y: 0})
 	} else {
-		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: +2, Y: -13}))
-		supplies = append(supplies, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -16}))
-		bot.positionsForBarracks = bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -13})
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +2, Y: -13}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -16}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +10, Y: -6}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +10, Y: -8}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +10, Y: -10}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +10, Y: -12}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +10, Y: -14}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +10, Y: -16}))
+		bot.positionsForSupplies = append(bot.positionsForSupplies, bot.myStartLocation.Add(api.Vec2D{X: +10, Y: -18}))
+
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: +5, Y: -13}))
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: -7, Y: -9}))
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: -7, Y: -5}))
+		bot.positionsForProduction = append(bot.positionsForProduction, bot.myStartLocation.Add(api.Vec2D{X: -7, Y: -1}))
+
+		bot.defendPoint = bot.natural.Location.Add(api.Vec2D{X: -10, Y: 0})
 	}
-	bot.positionsForSupplies = supplies
 
 	// Pick locations for supply depots
 	//pos := bot.myStartLocation.Offset(homeMinerals.Center(), -7)
@@ -136,7 +164,7 @@ func (bot *bot) findBuildingsPositions() {
 	//// Determine proxy location
 	//pos = bot.enemyStartLocation.Offset(bot.myStartLocation, 25)
 	//pos = closestToPos(bot.baseLocations, pos).Offset(bot.myStartLocation, 1)
-	//bot.positionsForBarracks = pos
+	//bot.positionsForProduction = pos
 	//
 	//// Build a re-usable query to check if we can build barracks
 	//bot.barracksQuery = botutil.NewQuery(bot)
@@ -147,10 +175,6 @@ func (bot *bot) findBuildingsPositions() {
 	//	bot.barracksQuery.Placement(ability.Build_Barracks, np)
 	//}
 }
-
-//func (bot *bot) getSCV() botutil.Unit {
-//	return bot.Self[terran.SCV].Choose(func(u botutil.Unit) bool { return u.IsGathering() }).First()
-//}
 
 func (bot *bot) buildSCVs() {
 	ccs := bot.Self.Structures().Choose(func(unit botutil.Unit) bool {
@@ -170,9 +194,16 @@ func (bot *bot) buildSCVs() {
 			if rax-raxInConstruction > 0 {
 				bot.UnitOrder(cc, ability.Morph_OrbitalCommand)
 				continue
-			} else if rax := bot.Self.ByType(terran.Barracks).First(); !rax.IsNil() && rax.BuildProgress > 0.9 {
-				// wait for rax to finish
-				continue
+			} else {
+				rax := bot.Self.ByType(terran.Barracks).First()
+				if !rax.IsNil() {
+					steps := (1.0 - rax.BuildProgress) * rax.BuildTime
+					// can wait 4 seconds to morph
+					if steps/StepsPerSec < 4 {
+						// wait for rax to finish
+						continue
+					}
+				}
 			}
 		}
 
@@ -186,128 +217,70 @@ func (bot *bot) buildSCVs() {
 	}
 }
 
-func (bot *bot) strategy2() {
+func (bot *bot) Strategy() {
 	defer func() { search.ShowDebugBoxes(bot.Bot) }()
 	bot.mp.Update()
-	bot.opener.strategy()
+	for _, s := range bot.strategies {
+		s.Strategy()
+	}
 
 	bot.buildSCVs()
 
-	bot.AllUnits()
-
 	// check if we should build supply depots
 	depotCount := bot.Self.Count(terran.SupplyDepot) + bot.Self.Count(terran.SupplyDepotLowered)
-	if bot.FoodCap > 23 && bot.FoodLeft() < 6 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 && depotCount < len(bot.positionsForSupplies) {
+	if bot.FoodCap >= 46 && bot.FoodLeft() < 12 && bot.Self.CountInProduction(terran.SupplyDepot) == 0 && depotCount < len(bot.positionsForSupplies) {
 		if bot.CanAfford(bot.ProductionCost(terran.SupplyDepot, ability.Build_SupplyDepot)) {
 			worker := bot.main.GetWorker()
-			if worker.IsNil() {
-				log.Printf("worker is nil!")
-				return
-			}
-			bot.mp.PlacementGrid.DebugLocationsNearPoint(bot.positionsForSupplies[depotCount], 6)
 			worker.BuildUnitAt(ability.Build_SupplyDepot, bot.positionsForSupplies[depotCount])
 		} else {
 			return
 		}
 	}
 
-	// expand to natural
-	if bot.natural.TownHall.IsNil() && bot.CanAfford(bot.ProductionCost(terran.CommandCenter, ability.Build_CommandCenter)) {
-		worker := bot.main.GetWorker()
-		if worker.IsNil() {
-			log.Printf("worker is nil!")
-			return
-		}
-		worker.BuildUnitAt(ability.Build_CommandCenter, bot.natural.Location)
-		log.Printf("building command center! worker: %v location: %v", worker.Tag, bot.natural.Location)
-	}
-}
+	// build units
+	bot.Self.ByType(terran.Barracks).Each(func(unit botutil.Unit) {
+		// set rally point
+		unit.RallyTo(bot.defendPoint, 0.5)
 
-//	// Build barracks
-//	barracksCount := bot.Self.Count(terran.Barracks)
-//	if barracksCount < 4 {
-//		var scv botutil.Unit
-//		if barracksCount == 0 || barracksCount == 2 {
-//			// Get the builder for barracks 0 and 2
-//			scv = bot.UnitByTag(bot.builder1)
-//			if scv.IsNil() && bot.builder1 != 0 {
-//				scv = bot.getSCV()
-//				if !scv.IsNil() {
-//					bot.builder1 = scv.Tag
-//				}
-//			}
-//		} else {
-//			// Get the builder for barracks 1 and 3
-//			scv = bot.UnitByTag(bot.builder2)
-//			if scv.IsNil() && bot.builder2 != 0 {
-//				scv = bot.getSCV()
-//				if !scv.IsNil() {
-//					bot.builder2 = scv.Tag
-//				}
-//			}
-//		}
-//		if !scv.IsNil() {
-//			// Build the barracks
-//			if scv.Pos2D().Distance2(bot.positionsForBarracks) > 25 {
-//				// Move closer first to bust the fog
-//				scv.OrderPos(ability.Move, bot.positionsForBarracks)
-//			} else {
-//				// Query target build locations and use the first one that's available
-//				results := bot.barracksQuery.Execute()
-//				for i, result := range results.Placements() {
-//					if result.Result == api.ActionResult_Success {
-//						scv.BuildUnitAt(ability.Build_Barracks, *results.PlacementQuery(i).TargetPos)
-//						break
-//					}
-//				}
-//			}
-//		}
-//	}
-//
-//	// Cast
-//	if cc := bot.Self[terran.OrbitalCommand].CanOrder(ability.Effect_CalldownMULE).First(); !cc.IsNil() {
-//		if !bot.homeMineral.IsNil() {
-//			cc.OrderTarget(ability.Effect_CalldownMULE, bot.homeMineral)
-//		}
-//	}
-//
-//	bot.BuildUnits(terran.Barracks, ability.Train_Reaper, 10)
+		addOn := bot.Self.All().ByTag(unit.AddOnTag)
+		if !addOn.IsNil() && addOn.UnitType == terran.BarracksReactor {
+			for i := len(unit.Orders); i < 2; i += 1 {
+				unit.Order(ability.Train_Marine)
+			}
+		}
+		if !addOn.IsNil() && addOn.UnitType == terran.BarracksTechLab {
+			for i := len(unit.Orders); i < 1; i += 1 {
+				unit.Order(ability.Train_Marine)
+			}
+		}
+	})
+	bot.Self.ByType(terran.Starport).Each(func(unit botutil.Unit) {
+		unit.RallyTo(bot.defendPoint, 0.5)
+
+		addOn := bot.Self.All().ByTag(unit.AddOnTag)
+		if !addOn.IsNil() && addOn.UnitType == terran.StarportReactor {
+			for i := len(unit.Orders); i < 2; i += 1 {
+				unit.Order(ability.Train_Medivac)
+			}
+		}
+	})
+
+	//// expand to natural
+	//if bot.natural.TownHall.IsNil() && bot.CanAfford(bot.ProductionCost(terran.CommandCenter, ability.Build_CommandCenter)) {
+	//	worker := bot.main.GetWorker()
+	//	if worker.IsNil() {
+	//		log.Printf("worker is nil!")
+	//		return
+	//	}
+	//	worker.BuildUnitAt(ability.Build_CommandCenter, bot.natural.Location)
+	//	log.Printf("building command center! worker: %v location: %v", worker.Tag, bot.natural.Location)
+	//}
+}
 
 func (bot *bot) tactics() {
 }
 
 //func (bot *bot) tactics() {
-//	// If there is idle scv, order it to gather minerals
-//	if !bot.homeMineral.IsNil() {
-//		idleSCVs := bot.Self[terran.SCV].Choose(func(u botutil.Unit) bool { return u.IsIdle() })
-//		bot.UnitsOrderTarget(idleSCVs, ability.Harvest_Gather, bot.homeMineral)
-//	}
-//
-//	// Don't issue orders too often, or game won't be able to react
-//	if bot.GameLoop%6 == 0 {
-//		// If there is ready unsaturated refinery and an scv gathering, send it there
-//		if refinery := bot.Self[terran.Refinery].Choose(func(u botutil.Unit) bool {
-//			return u.IsBuilt() && u.AssignedHarvesters < 3
-//		}).First(); !refinery.IsNil() {
-//			if scv := bot.getSCV(); !scv.IsNil() {
-//				scv.OrderTarget(ability.Harvest_Gather, refinery)
-//			}
-//		}
-//	}
-//
-//	if bot.GameLoop == 224 { // 10 sec
-//		if scv := bot.getSCV(); !scv.IsNil() {
-//			scv.OrderPos(ability.Move, bot.positionsForBarracks)
-//			bot.builder1 = scv.Tag
-//		}
-//	}
-//	if bot.GameLoop == 672 { // 30 sec
-//		if scv := bot.getSCV(); !scv.IsNil() {
-//			scv.OrderPos(ability.Move, bot.positionsForBarracks)
-//			bot.builder2 = scv.Tag
-//		}
-//	}
-//
 //	// Attack!
 //	reapers := bot.Self[terran.Reaper]
 //	if reapers.Len() == 0 {
@@ -366,151 +339,4 @@ func (bot *bot) getTargets() botutil.Units {
 
 	// Otherwise just kill all the buildings
 	return bot.Enemy.Ground().Structures().All()
-}
-
-type opener struct {
-	stepStrategy
-	*bot
-	step       int
-	finishStep int
-
-	initialRally   api.Point2D
-	initialWorkers botutil.Units
-
-	positionForRefinery botutil.Unit
-
-	builder         api.UnitTag
-	refineryBuilder api.UnitTag
-}
-
-func (o *opener) strategy() {
-	if o.finished() {
-		return
-	}
-
-	// initialize initial workers
-	if o.now() {
-		o.initialWorkers = o.Self.All()
-		o.initialRally = o.main.TownHall.RallyTargets[0].Point.ToPoint2D()
-		// change rally to depo location
-		o.main.TownHall.OrderPos(ability.Rally_CommandCenter, o.positionsForSupplies[0])
-
-		o.advance()
-	}
-
-	// try to fetch the newly created SCV and mark it as the builder
-	if o.now() {
-		scvs := o.Self.All()
-		if o.initialWorkers.Len() == scvs.Len() {
-			return
-		}
-
-		// figure out which SCV is new
-		newWorker := scvs.Drop(func(u botutil.Unit) bool {
-			return !o.initialWorkers.ByTag(u.Tag).IsNil()
-		}).First()
-
-		o.main.RemoveWorker(newWorker)
-		o.builder = newWorker.Tag
-
-		// change rally to mineral patch
-		o.main.TownHall.OrderPos(ability.Rally_CommandCenter, o.initialRally)
-
-		o.advance()
-	}
-
-	// short circuit if we don't have a builder
-	builder := o.Self.All().ByTag(o.builder)
-	if !builder.IsNil() && o.main.HasWorker(builder.Tag) {
-		o.main.RemoveWorker(builder)
-	}
-
-	// move to depo location & build depo at 14
-	if o.now() {
-		builder.MoveTo(o.positionsForSupplies[0], 0)
-		if o.FoodUsed == 14 && o.CanAfford(o.ProductionCost(terran.SupplyDepot, ability.Build_SupplyDepot)) {
-			builder.BuildUnitAt(ability.Build_SupplyDepot, o.positionsForSupplies[0])
-			o.advance()
-		}
-	}
-
-	// wait for depo to finish
-	if o.now() {
-		if o.Self.Count(terran.SupplyDepot) == 1 && o.Self.CountInProduction(terran.SupplyDepot) == 0 {
-			// set ramp depo & lower it
-			ramp := o.Self.Structures().Choose(func(unit botutil.Unit) bool {
-				return unit.UnitType == terran.SupplyDepot
-			}).First()
-			if ramp.IsNil() {
-				log.Printf("ramp is nil!!!")
-				return
-			}
-			log.Printf("found ramp! %v", ramp)
-			o.rampSupply = ramp.Tag
-			o.UnitOrder(ramp, ability.Morph_SupplyDepot_Lower)
-			o.advance()
-		}
-	}
-
-	// build rax
-	if o.now() {
-		if o.FoodUsed == 16 && o.CanAfford(o.ProductionCost(terran.Barracks, ability.Build_Barracks)) {
-			builder.BuildUnitAt(ability.Build_Barracks, o.positionsForBarracks)
-			o.builder = api.UnitTag(0)
-			o.advance()
-		}
-	}
-
-	// == build first refinery ==
-
-	// get refinery builder & location
-	if o.now() {
-		o.refineryBuilder = o.main.GetWorker().Tag
-		o.positionForRefinery = o.main.GetFreeGasGeyserPosition()
-		o.advance()
-	}
-
-	// try to build refinery
-	if o.now() {
-		builder = o.Self.All().ByTag(o.refineryBuilder)
-		if !builder.IsNil() && o.main.HasWorker(builder.Tag) {
-			o.main.RemoveWorker(builder)
-		}
-
-		if o.CanAfford(o.ProductionCost(terran.Refinery, ability.Build_Refinery)) {
-			builder.BuildUnitOn(ability.Build_Refinery, o.positionForRefinery)
-			o.refineryBuilder = api.UnitTag(0)
-			o.advance()
-
-			// force next iteration now
-			return
-		} else {
-			builder.MoveTo(o.positionForRefinery.Pos2D(), 1)
-		}
-	}
-
-	// == build second refinery ==
-
-	// get refinery builder & location
-	if o.now() {
-		o.refineryBuilder = o.main.GetWorker().Tag
-		o.positionForRefinery = o.main.GetFreeGasGeyserPosition()
-		o.advance()
-	}
-
-	// try to build refinery
-	if o.now() {
-		builder = o.Self.All().ByTag(o.refineryBuilder)
-		if !builder.IsNil() && o.main.HasWorker(builder.Tag) {
-			o.main.RemoveWorker(builder)
-		}
-
-		if o.CanAfford(o.ProductionCost(terran.Refinery, ability.Build_Refinery)) {
-			builder.BuildUnitOn(ability.Build_Refinery, o.positionForRefinery)
-			o.refineryBuilder = api.UnitTag(0)
-			o.advance()
-		} else {
-			builder.MoveTo(o.positionForRefinery.Pos2D(), 1)
-		}
-	}
 }

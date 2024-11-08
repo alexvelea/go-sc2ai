@@ -272,6 +272,9 @@ func (base *Base) PeakWorker() botutil.Unit {
 }
 
 func (base *Base) RemoveWorker(worker botutil.Unit) {
+	if worker.IsNil() || !base.HasWorker(worker.Tag) {
+		return
+	}
 	mineralTag := base.mining[worker.Tag]
 	unitTag := worker.Tag
 	delete(base.minedBy[mineralTag], unitTag)

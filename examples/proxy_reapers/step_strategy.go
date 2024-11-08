@@ -4,6 +4,10 @@ import (
 	"log"
 )
 
+type Strategy interface {
+	Strategy()
+}
+
 type stepStrategy struct {
 	cStep      int
 	step       int

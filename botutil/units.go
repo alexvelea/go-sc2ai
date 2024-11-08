@@ -139,6 +139,34 @@ func (units Units) ByTag(tag api.UnitTag) Unit {
 	return Unit{}
 }
 
+func (units Units) ByType(unitType api.UnitTypeID) Units {
+	return units.Choose(func(unit Unit) bool {
+		return unit.UnitType == unitType
+	})
+}
+
+func (units Units) ByTypes(unitTypes []api.UnitTypeID) Units {
+	return units.Choose(func(unit Unit) bool {
+		for _, t := range unitTypes {
+			if t == unit.UnitId {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func (units Units) ByPosition(pos api.Point2D) Unit {
+	for _, u := range units.raw {
+		if units.filter == nil || units.filter(u) {
+			if u.Pos2D() == pos {
+				return u
+			}
+		}
+	}
+	return Unit{}
+}
+
 // EachWhile calls f until it returns false or runs out of elements.
 // Returns the last result of f (false on early return).
 func (units Units) EachWhile(f func(Unit) bool) bool {

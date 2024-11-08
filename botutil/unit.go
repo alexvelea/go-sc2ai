@@ -300,6 +300,23 @@ func (u Unit) needsMoveToOrder(pos api.Point2D, tollerance float32) bool {
 	return true
 }
 
+func (u Unit) RallyTo(pos api.Point2D, tollerance float32) {
+	if u.needsRallyToOrder(pos, tollerance) {
+		u.OrderPos(ability.Rally_Units, pos)
+	}
+}
+
+func (u Unit) needsRallyToOrder(pos api.Point2D, tollerance float32) bool {
+	if len(u.RallyTargets) == 0 {
+		return true
+	} else {
+		if u.RallyTargets[0].Point.ToPoint2D().Distance2(pos) <= tollerance*tollerance {
+			return false // already there
+		}
+	}
+	return true
+}
+
 // CanBeTargeted returns true if the unit type can be targeted for attacks.
 func (u Unit) CanBeTargeted() bool {
 	return u.UnitType != unit.Protoss_Interceptor
